@@ -26,17 +26,22 @@ const ctx = canvas.getContext('2d');
 
 // ===== 裝置與佈局 =====
 let V = false; // true=直立, false=橫向
-let W = 800, H = 450; // 畫布尺寸
+let W = 800, H = 450; // 邏輯尺寸
+let DPR = 1; // devicePixelRatio
+let isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 function resize() {
   const ww = window.innerWidth, wh = window.innerHeight;
-  V = wh > ww * 1.1; // 高>寬的1.1倍視為直立
+  V = wh > ww * 1.1;
   if (V) { W = 450; H = 800; } else { W = 800; H = 450; }
-  canvas.width = W; canvas.height = H;
-  // 縮放至視窗
+  // 高解析度：用 devicePixelRatio 提升清晰度
+  DPR = Math.min(window.devicePixelRatio || 1, 3); // 最高3x，避免過度
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
   const scale = Math.min(ww / W, wh / H);
   canvas.style.width = (W * scale) + 'px';
   canvas.style.height = (H * scale) + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // 縮放繪圖上下文
   updateLayout();
 }
 
@@ -98,19 +103,51 @@ let state = S.TITLE, timer = 0, frame = 0, scrollX = 0;
 // ===== 輸入 =====
 const keys = {};
 let clicked = false, clickX = 0, clickY = 0, touchActive = false, touchX = -1, touchY = -1;
+let jumpPressed = false; // 手機跳躍
+let touchCount = 0; // 同時觸控數量
 document.addEventListener('keydown', e => { keys[e.key] = true; });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 function gcp(e, t) {
   const r = canvas.getBoundingClientRect();
+  // 用邏輯尺寸而非物理像素
   const sx = W / r.width, sy = H / r.height;
   const cx = t ? e.touches[0].clientX : e.clientX;
   const cy = t ? e.touches[0].clientY : e.clientY;
   return [(cx - r.left) * sx, (cy - r.top) * sy];
 }
-canvas.addEventListener('touchstart', e => { e.preventDefault(); [touchX,touchY]=gcp(e,true); touchActive=true; clicked=true; [clickX,clickY]=[touchX,touchY]; }, {passive:false});
-canvas.addEventListener('touchmove', e => { e.preventDefault(); [touchX,touchY]=gcp(e,true); }, {passive:false});
-canvas.addEventListener('touchend', e => { e.preventDefault(); touchActive=false; }, {passive:false});
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  [touchX,touchY] = gcp(e,true);
+  touchActive = true;
+  touchCount = e.touches.length;
+  clicked = true;
+  [clickX,clickY] = [touchX,touchY];
+  // 檢查是否點到虛擬跳躍按鈕
+  if(isGamePhase() && isMobile){
+    const jb = getJumpBtnRect();
+    if(touchX>=jb.x && touchX<=jb.x+jb.w && touchY>=jb.y && touchY<=jb.y+jb.h){
+      jumpPressed = true;
+    }
+  }
+}, {passive:false});
+canvas.addEventListener('touchmove', e => { e.preventDefault(); [touchX,touchY]=gcp(e,true); touchCount=e.touches.length; }, {passive:false});
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  touchCount = e.touches.length;
+  if(touchCount === 0) touchActive = false;
+}, {passive:false});
 canvas.addEventListener('click', e => { clicked=true; [clickX,clickY]=gcp(e,false); });
+
+function isGamePhase(){ return state===S.P1||state===S.P2; }
+function getJumpBtnRect(){
+  const sz = V ? 65 : 60;
+  return { x: W - sz - 15, y: L.groundY - sz - 10, w: sz, h: sz };
+}
+function getMoveZones(){
+  // 左右移動觸控區（排除跳躍按鈕區域）
+  const midX = V ? W * 0.5 : W * 0.45;
+  return { leftMax: midX, rightMin: midX };
+}
 
 // ===== 工具 =====
 function fs(sz){ return Math.round(sz * L.fontSize); }
@@ -281,11 +318,74 @@ function go(s,story=null){
 // ===== 移動 =====
 function movePlayer(mul=1){
   const spd=P.spd*mul;
-  if(keys['ArrowLeft']||keys['a']||(touchActive&&touchX<W*.4)) P.x=Math.max(30,P.x-spd);
-  if(keys['ArrowRight']||keys['d']||(touchActive&&touchX>W*.6)) P.x=Math.min(W-30,P.x+spd);
-  if((keys['ArrowUp']||keys[' ']||keys['w'])&&P.ground){P.vy=-10*mul;P.ground=false;keys[' ']=false;}
+  const mz = getMoveZones();
+  // 鍵盤
+  if(keys['ArrowLeft']||keys['a']) P.x=Math.max(30,P.x-spd);
+  if(keys['ArrowRight']||keys['d']) P.x=Math.min(W-30,P.x+spd);
+  // 觸控移動（排除跳躍按鈕區域）
+  if(touchActive && isMobile){
+    const jb = getJumpBtnRect();
+    const inJumpBtn = touchX>=jb.x&&touchX<=jb.x+jb.w&&touchY>=jb.y&&touchY<=jb.y+jb.h;
+    if(!inJumpBtn){
+      if(touchX < mz.leftMax) P.x=Math.max(30,P.x-spd);
+      if(touchX > mz.rightMin) P.x=Math.min(W-30,P.x+spd);
+    }
+  }
+  // 非觸控裝置的觸控（滑鼠模擬等）
+  if(touchActive && !isMobile){
+    if(touchX<W*.4) P.x=Math.max(30,P.x-spd);
+    if(touchX>W*.6) P.x=Math.min(W-30,P.x+spd);
+  }
+  // 跳躍
+  if((keys['ArrowUp']||keys[' ']||keys['w']||jumpPressed)&&P.ground){
+    P.vy=-10*mul;P.ground=false;keys[' ']=false;jumpPressed=false;
+  }
   P.vy+=.5;P.y+=P.vy;
   if(P.y>=L.groundY-P.h){P.y=L.groundY-P.h;P.vy=0;P.ground=true;}
+}
+
+// ===== 虛擬按鈕繪製 =====
+function drawVirtualControls(){
+  if(!isMobile || !isGamePhase()) return;
+  const jb = getJumpBtnRect();
+  // 跳躍按鈕
+  ctx.globalAlpha = 0.35;
+  rr(jb.x, jb.y, jb.w, jb.h, 14, 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.5)');
+  ctx.globalAlpha = 0.6;
+  // 箭頭↑
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  const cx2 = jb.x+jb.w/2, cy2 = jb.y+jb.h/2;
+  ctx.moveTo(cx2, cy2-14);
+  ctx.lineTo(cx2+12, cy2+4);
+  ctx.lineTo(cx2+4, cy2+4);
+  ctx.lineTo(cx2+4, cy2+14);
+  ctx.lineTo(cx2-4, cy2+14);
+  ctx.lineTo(cx2-4, cy2+4);
+  ctx.lineTo(cx2-12, cy2+4);
+  ctx.closePath();
+  ctx.fill();
+  text('跳躍', cx2, cy2+jb.h/2+10, 10, 'rgba(255,255,255,0.4)');
+  ctx.globalAlpha = 1;
+
+  // 左右提示箭頭
+  ctx.globalAlpha = 0.2;
+  // 左
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(30, L.groundY + 25);
+  ctx.lineTo(50, L.groundY + 15);
+  ctx.lineTo(50, L.groundY + 35);
+  ctx.closePath();
+  ctx.fill();
+  // 右
+  ctx.beginPath();
+  ctx.moveTo(W - 30, L.groundY + 25);
+  ctx.lineTo(W - 50, L.groundY + 15);
+  ctx.lineTo(W - 50, L.groundY + 35);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
 }
 
 // ===== 震動+閃紅 =====
@@ -366,7 +466,7 @@ function upP1(){
   drawPerson(P.x,P.y+P.h,1,P.bp);
   text(`收集：${score}`,L.cx,H-15,12,'rgba(255,255,255,.6)');
   if(disasterCount>0)text(`災難：${disasterCount}`,V?L.cx:W*.72,H-15,11,'rgba(255,150,150,.6)');
-  drawChecklist(L.checkX,L.checkY);drawParticles();drawFlash();
+  drawChecklist(L.checkX,L.checkY);drawVirtualControls();drawParticles();drawFlash();
   if(checkItems.every(c=>c.done))go(S.P2,'afterP1');
 }
 
@@ -400,7 +500,7 @@ function upP2(){
   text('重擔程度',barX+barW/2,barY-10,11,'#fff');
   if(timer%20===0)P.bp=Math.min(100,P.bp+1);
   if(timer>300){const a=Math.min(1,(timer-300)/100);text('「追求沒有的，又怕失去擁有的。」',L.cx,H-20,V?13:16,`rgba(255,200,150,${a})`);}
-  drawParticles();drawFlash();
+  drawVirtualControls();drawParticles();drawFlash();
   if(P.bp>=98||timer>1500)go(S.P3,'afterP2');
 }
 
@@ -556,7 +656,9 @@ function upEnding(){
 
 // ===== 主循環 =====
 function loop(){
-  frame++;updateShake();ctx.save();ctx.translate(shakeX,shakeY);
+  frame++;updateShake();
+  ctx.setTransform(DPR,0,0,DPR,0,0); // 重設 DPR 縮放
+  ctx.save();ctx.translate(shakeX,shakeY);
   switch(state){
     case S.TITLE:upTitle();break;case S.STORY:upStory();break;
     case S.P1:upP1();break;case S.P1_INT:upP1Int();break;
@@ -564,7 +666,7 @@ function loop(){
     case S.P3:upP3();break;case S.P4:upP4();break;case S.P5:upP5();break;
     case S.ENDING:upEnding();break;
   }
-  ctx.restore();clicked=false;requestAnimationFrame(loop);
+  ctx.restore();clicked=false;jumpPressed=false;requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 </script>
