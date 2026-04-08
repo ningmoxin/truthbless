@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>尋找真幸福</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+  max-width: 100vw;
+  max-height: 100vh;
+  touch-action: none;
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  const ratio = 16 / 9;
+  let w = window.innerWidth, h = window.innerHeight;
+  if (w / h > ratio) w = h * ratio; else h = w / ratio;
+  canvas.width = 800; canvas.height = 450;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ===== 狀態 =====
+const S = { TITLE:'title', STORY:'story', P1:'p1', P1_INT:'p1_int', P2:'p2', P2_INT:'p2_int', P3:'p3', P4:'p4', P5:'p5', ENDING:'ending' };
+let state = S.TITLE, timer = 0, frame = 0, scrollX = 0;
+
+// ===== 輸入 =====
+const keys = {};
+let clicked = false, clickX = 0, clickY = 0, touchActive = false, touchX = -1, touchY = -1;
+document.addEventListener('keydown', e => { keys[e.key] = true; });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+function getCanvasPos(e, touch) {
+  const r = canvas.getBoundingClientRect();
+  const sx = canvas.width / r.width, sy = canvas.height / r.height;
+  const cx = touch ? e.touches[0].clientX : e.clientX;
+  const cy = touch ? e.touches[0].clientY : e.clientY;
+  return [(cx - r.left) * sx, (cy - r.top) * sy];
+}
+canvas.addEventListener('touchstart', e => { e.preventDefault(); [touchX, touchY] = getCanvasPos(e, true); touchActive = true; clicked = true; [clickX, clickY] = [touchX, touchY]; }, {passive:false});
+canvas.addEventListener('touchmove', e => { e.preventDefault(); [touchX, touchY] = getCanvasPos(e, true); }, {passive:false});
+canvas.addEventListener('touchend', e => { e.preventDefault(); touchActive = false; }, {passive:false});
+canvas.addEventListener('click', e => { clicked = true; [clickX, clickY] = getCanvasPos(e, false); });
+
+// ===== 工具 =====
+function text(t, x, y, sz, col, align='center') {
+  ctx.font = `bold ${sz}px 'Microsoft JhengHei',sans-serif`;
+  ctx.fillStyle = col; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillText(t, x, y);
+}
+function textShadow(t, x, y, sz, col) {
+  text(t, x+2, y+2, sz, 'rgba(0,0,0,0.4)');
+  text(t, x, y, sz, col);
+}
+function lerp(a,b,t){ return a+(b-a)*t; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function ease(t){ return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2; }
+function rr(x,y,w,h,r,f,s){
+  ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+  if(f){ctx.fillStyle=f;ctx.fill();}
+  if(s){ctx.strokeStyle=s;ctx.lineWidth=2;ctx.stroke();}
+}
+function btn(t,x,y,w,h,highlight=false){
+  rr(x-w/2,y-h/2,w,h,10,highlight?'#e8b84a':'#c49332','#8b6914');
+  text(t,x,y,18,'#fff');
+}
+function inRect(px,py,rx,ry,rw,rh){ return px>=rx&&px<=rx+rw&&py>=ry&&py<=ry+rh; }
+
+// ===== 粒子 =====
+let particles = [];
+function addP(x,y,col,n=10,life=40,sz=3){
+  for(let i=0;i<n;i++) particles.push({x,y,vx:(Math.random()-.5)*4,vy:(Math.random()-.5)*4-2,col,life,max:life,sz});
+}
+function drawParticles(){
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx; p.y+=p.vy; p.vy+=.05; p.life--;
+    ctx.globalAlpha=p.life/p.max; ctx.fillStyle=p.col;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.sz*(p.life/p.max),0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  });
+}
+
+// 光點
+let lights = Array.from({length:30},()=>({x:Math.random()*800,y:Math.random()*450,vy:.3+Math.random()*.5,sz:1+Math.random()*2,a:Math.random()*Math.PI*2}));
+function drawLights(){
+  lights.forEach(l=>{
+    l.y+=l.vy; l.a+=.03; if(l.y>460){l.y=-10;l.x=Math.random()*800;}
+    ctx.globalAlpha=(.3+.3*Math.sin(l.a)); ctx.fillStyle='#ffe8a0';
+    ctx.beginPath(); ctx.arc(l.x,l.y,l.sz,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  });
+}
+
+// ===== 玩家 =====
+const P = {x:150,y:320,w:30,h:50,vy:0,ground:true,bp:0,spd:4};
+const GY = 370, GR = .5;
+function resetP(){ Object.assign(P,{x:150,y:320,vy:0,ground:true,bp:0,spd:4}); }
+
+function drawPerson(x,y,s=1,bp=0,bright=false){
+  ctx.save(); ctx.translate(x,y);
+  if(bp>0){
+    const bs=10+bp*.4;
+    ctx.fillStyle=`rgb(${160+bp*.5},${100-bp*.5},${60-bp*.3})`;
+    rr(-18*s-bs*.3,-35*s,bs*s,(bs+10)*s,4,ctx.fillStyle);
+    if(bp>30){
+      ctx.strokeStyle='#666';ctx.lineWidth=2;
+      for(let i=0;i<Math.floor(bp/25);i++){
+        for(let j=0;j<3;j++){
+          ctx.beginPath();ctx.ellipse(-18*s-bs*.15-j*6,(-25+i*12)*s,4,3,0,0,Math.PI*2);ctx.stroke();
+        }
+      }
+    }
+  }
+  rr(-10*s,-30*s,20*s,30*s,3,bright?'#4caf50':'#2c3e50');
+  ctx.fillStyle=bright?'#ffe0b2':'#e8c39e';
+  ctx.beginPath();ctx.arc(0,-40*s,12*s,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3e2723';ctx.beginPath();ctx.arc(0,-45*s,10*s,Math.PI,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#444';ctx.beginPath();ctx.arc(-4*s,-42*s,2*s,0,Math.PI*2);ctx.arc(4*s,-42*s,2*s,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#444';ctx.lineWidth=1.5;ctx.beginPath();
+  if(bright) ctx.arc(0,-37*s,5*s,.1*Math.PI,.9*Math.PI);
+  else if(bp>50) ctx.arc(0,-33*s,4*s,1.1*Math.PI,1.9*Math.PI);
+  else ctx.arc(0,-35*s,3*s,.2*Math.PI,.8*Math.PI);
+  ctx.stroke();
+  ctx.fillStyle='#34495e';
+  ctx.fillRect(-8*s,0,6*s,16*s);ctx.fillRect(2*s,0,6*s,16*s);
+  ctx.restore();
+}
+
+function drawJesus(x,y){
+  ctx.save();ctx.translate(x,y);
+  ctx.fillStyle='rgba(255,230,150,.3)';ctx.beginPath();ctx.arc(0,-45,22,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#f5f0e0';ctx.beginPath();ctx.moveTo(-15,-25);ctx.lineTo(15,-25);ctx.lineTo(22,0);ctx.lineTo(-22,0);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#e8e0d0';ctx.fillRect(-20,-5,40,5);
+  ctx.fillStyle='#ffe0b2';ctx.beginPath();ctx.arc(0,-38,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#6d4c41';ctx.beginPath();ctx.arc(0,-42,10,Math.PI,Math.PI*2);ctx.fill();
+  ctx.fillRect(-10,-42,3,18);ctx.fillRect(7,-42,3,18);
+  ctx.fillStyle='#5d4037';ctx.beginPath();ctx.arc(-3,-38,1.5,0,Math.PI*2);ctx.arc(3,-38,1.5,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#5d4037';ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,-34,4,.1*Math.PI,.9*Math.PI);ctx.stroke();
+  ctx.fillStyle='#ffe0b2';ctx.beginPath();ctx.arc(-24,-15,5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+// ===== 背景 =====
+function drawCity(sx,dark=0){
+  const d=dark;
+  const sg=ctx.createLinearGradient(0,0,0,300);
+  sg.addColorStop(0,`rgb(${140-d*80},${160-d*80},${200-d*80})`);
+  sg.addColorStop(1,`rgb(${200-d*80},${210-d*80},${220-d*80})`);
+  ctx.fillStyle=sg;ctx.fillRect(0,0,800,370);
+  ctx.fillStyle=`rgba(${100-d*50},${110-d*50},${130-d*50},.5)`;
+  for(let i=0;i<12;i++){const bx=((i*120-sx*.2)%960+960)%960-80;ctx.fillRect(bx,370-(80+Math.sin(i*2.5)*40),50,80+Math.sin(i*2.5)*40);}
+  ctx.fillStyle=`rgba(${70-d*40},${80-d*40},${100-d*40},.7)`;
+  for(let i=0;i<8;i++){
+    const bx=((i*150-sx*.5)%800+800)%800-75,bh=100+Math.sin(i*3.7)*50;
+    ctx.fillRect(bx,370-bh,70,bh);
+    ctx.fillStyle=`rgba(255,230,150,${.3+d*.3})`;
+    for(let wy=370-bh+10;wy<360;wy+=20)for(let wx=bx+10;wx<bx+60;wx+=20)ctx.fillRect(wx,wy,8,8);
+    ctx.fillStyle=`rgba(${70-d*40},${80-d*40},${100-d*40},.7)`;
+  }
+  ctx.fillStyle=`rgb(${80-d*30},${85-d*30},${90-d*30})`;ctx.fillRect(0,370,800,80);
+  ctx.strokeStyle='rgba(255,255,255,.3)';ctx.lineWidth=2;ctx.setLineDash([20,15]);
+  ctx.beginPath();ctx.moveTo(0,400);ctx.lineTo(800,400);ctx.stroke();ctx.setLineDash([]);
+}
+
+function drawBright(b=1){
+  const sg=ctx.createLinearGradient(0,0,0,300);
+  sg.addColorStop(0,`rgba(135,206,235,${b})`);sg.addColorStop(1,`rgba(255,253,230,${b})`);
+  ctx.fillStyle=sg;ctx.fillRect(0,0,800,370);
+  if(b>.5){
+    const a=(b-.5)*2;
+    const gr=ctx.createRadialGradient(650,80,20,650,80,200);
+    gr.addColorStop(0,`rgba(255,230,100,${a*.8})`);gr.addColorStop(.3,`rgba(255,200,50,${a*.3})`);gr.addColorStop(1,'rgba(255,200,50,0)');
+    ctx.fillStyle=gr;ctx.fillRect(0,0,800,400);
+    ctx.fillStyle=`rgba(255,220,80,${a})`;ctx.beginPath();ctx.arc(650,80,30,0,Math.PI*2);ctx.fill();
+  }
+  const gg=ctx.createLinearGradient(0,350,0,450);
+  gg.addColorStop(0,`rgba(120,180,80,${b})`);gg.addColorStop(1,`rgba(90,150,60,${b})`);
+  ctx.fillStyle=gg;ctx.fillRect(0,370,800,80);
+  if(b>.3)for(let i=0;i<20;i++){
+    const fx=(i*42+frame*.2)%800;
+    ctx.fillStyle=`rgba(100,200,80,${b*.7})`;ctx.fillRect(fx,365,2,8);
+    if(i%3===0){ctx.fillStyle=`rgba(255,200,100,${b*.8})`;ctx.beginPath();ctx.arc(fx,362,3,0,Math.PI*2);ctx.fill();}
+  }
+  if(b>.5) drawLights();
+}
+
+// ===== 清單 =====
+let checkItems = [
+  {name:'高、富、帥/白、富、美', done:false, need:5},
+  {name:'有錢有勢', done:false, need:10},
+  {name:'身體健康', done:false, need:15},
+  {name:'家庭美滿', done:false, need:20}
+];
+let score = 0;
+
+function drawChecklist(x,y){
+  rr(x,y,180,140,8,'rgba(255,248,230,.95)','#c49332');
+  text('人生勝利組',x+90,y+18,14,'#8b6914');
+  ctx.strokeStyle='#c49332';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+10,y+30);ctx.lineTo(x+170,y+30);ctx.stroke();
+  checkItems.forEach((it,i)=>{
+    const cy=y+50+i*25;
+    rr(x+12,cy-8,16,16,2,it.done?'#d4a44a':'#fff','#c49332');
+    if(it.done){ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x+15,cy);ctx.lineTo(x+19,cy+4);ctx.lineTo(x+26,cy-4);ctx.stroke();}
+    text(it.name,x+100,cy,11,'#5a4a2a');
+  });
+}
+
+// ===== 收集物 =====
+const ITEMS=[
+  {emoji:'💰',name:'金錢',col:'#f1c40f'},{emoji:'🏠',name:'房子',col:'#e67e22'},
+  {emoji:'🚗',name:'車子',col:'#e74c3c'},{emoji:'👔',name:'地位',col:'#3498db'},
+  {emoji:'💎',name:'名牌',col:'#9b59b6'},{emoji:'🏆',name:'成就',col:'#f39c12'}
+];
+let collectibles=[], negFloats=[], obstacles=[];
+
+function spawnItem(){
+  const t=ITEMS[Math.floor(Math.random()*ITEMS.length)];
+  collectibles.push({x:800+Math.random()*200,y:150+Math.random()*180,type:t,got:false,bob:Math.random()*Math.PI*2});
+}
+
+// ===== 災難物件（Phase 1 可碰撞觸發）=====
+const DISASTER_TYPES = [
+  {emoji:'⚡',icon:'📉',title:'突發事件：公司裁員！',desc:'你失去了工作，收入歸零。',loss:3,warn:'裁員風暴'},
+  {emoji:'🏥',icon:'💔',title:'突發事件：家人生病！',desc:'巨額醫療費用，積蓄用盡。',loss:4,warn:'疾病'},
+  {emoji:'📉',icon:'📊',title:'突發事件：投資失利！',desc:'股票崩盤，財富蒸發。',loss:5,warn:'股災'},
+  {emoji:'🔥',icon:'🏚️',title:'突發事件：天災人禍！',desc:'一場大火燒毀了你的房子。',loss:4,warn:'天災'},
+  {emoji:'💔',icon:'😢',title:'突發事件：婚姻危機！',desc:'關係破裂，家庭不再美滿。',loss:3,warn:'婚變'},
+  {emoji:'😰',icon:'🏥',title:'突發事件：健康警報！',desc:'過度操勞，身體亮紅燈。',loss:3,warn:'過勞'},
+  {emoji:'⚠️',icon:'😱',title:'突發事件：詐騙受害！',desc:'多年積蓄被騙走。',loss:5,warn:'詐騙'},
+];
+let disasters = []; // 場上的災難物件
+let interruptData = null, interruptTimer = 0;
+let disasterCount = 0; // 被撞到幾次
+
+function spawnDisaster(){
+  const t = DISASTER_TYPES[Math.floor(Math.random()*DISASTER_TYPES.length)];
+  // 災難物件從右邊進入，有上下浮動，比收集物稍大
+  disasters.push({
+    x: 800 + Math.random()*100,
+    y: 140 + Math.random()*200,
+    type: t,
+    hit: false,
+    bob: Math.random()*Math.PI*2,
+    pulse: 0
+  });
+}
+
+// ===== Phase 2 碰撞觸發物件 =====
+const P2_CRISIS_TYPES = [
+  {emoji:'😵',title:'你累垮了！',desc:'過度追求導致身心崩潰...\n你需要停下來，但你停不下來。',warn:'崩潰'},
+  {emoji:'💔',title:'關係破裂！',desc:'你太忙了，忽略了身邊的人。\n婚姻亮起紅燈...',warn:'心碎'},
+  {emoji:'😰',title:'內心空虛！',desc:'有錢有地位，卻找不到價值。\n夜深人靜時，空虛感襲來...',warn:'空虛'},
+  {emoji:'😤',title:'情緒失控！',desc:'壓力太大，你對家人發了脾氣。\n事後卻更加自責...',warn:'暴怒'},
+  {emoji:'🫠',title:'迷失方向！',desc:'擁有了這麼多，\n卻不知道自己為什麼而活。',warn:'迷失'},
+];
+let p2Crises = []; // 場上的 P2 危機物件
+let p2IntData = null, p2IntTimer = 0, p2IntCount = 0;
+
+function spawnP2Crisis(){
+  const t = P2_CRISIS_TYPES[Math.floor(Math.random()*P2_CRISIS_TYPES.length)];
+  p2Crises.push({
+    x: 800 + Math.random()*80,
+    y: 130 + Math.random()*210,
+    type: t,
+    hit: false,
+    bob: Math.random()*Math.PI*2,
+    pulse: 0
+  });
+}
+
+// ===== 故事 =====
+const STORIES = {
+  intro:{lines:['在這個忙碌的世界裡，','每個人都在追尋「幸福」。','','你，也不例外。','','▸ 點擊或按空白鍵開始'],next:S.P1},
+  afterP1:{lines:['天有不測風雲...','','你拼命收集了這些「幸福條件」，','但它們隨時可能被奪走。','','就算擁有一切，也無法保證永恆。','','▸ 點擊繼續'],next:S.P2},
+  afterP2:{lines:['華麗外表下的沉重背包...','','被賺錢綁架：一心要更多','關係破裂：婚姻、親子衝突不斷','內心空虛：有錢有地位，卻找不到價值','','「追求沒有的，又怕失去擁有的。」','','▸ 點擊繼續'],next:S.P3},
+  afterP3:{lines:['為什麼我們這麼努力，卻還是不快樂？','','重新認識「罪」：','它不是犯罪紀錄，而是斷了線。','','中國的荀子說「人性本惡」。','這就是我們無法逃避的本性。','','▸ 點擊繼續'],next:S.P4},
+  afterP4:{lines:['用錯方法的徒勞無功！','','因為用錯了貨幣，找錯了債主。','','我們真正的債主是上帝。','必須使用上帝指定的方法。','','▸ 點擊繼續'],next:S.P5}
+};
+let curStory = null, storyFade = 0;
+
+// ===== Phase 3 =====
+const OBS_LABELS = ['嫉妒','說謊','壞脾氣','貪心','驕傲','酒癮','賭癮','毒癮'];
+let obsHits = 0, steerAngle = 0;
+
+// ===== Phase 4 =====
+let selDoor=-1, doorPhase=0, doorTimer=0, wrongTries=0;
+const DOOR_INFO = [
+  {label:'求神拜佛', emoji:'🙏', desc:'你虔誠地拜了又拜...\n但什麼都沒有改變。'},
+  {label:'算命改運', emoji:'🔮', desc:'算命師說你要改名、改方位...\n結果還是一樣。'},
+  {label:'積功德', emoji:'📿', desc:'你努力做善事...\n但內心的空虛依然存在。'},
+];
+
+// ===== Phase 5 =====
+let p5State=0, p5Timer=0, bright=0;
+
+// ===== Ending =====
+let endTimer=0, endPhase=0;
+
+// ===== 切換狀態 =====
+function go(s, story=null){
+  state = s; timer = 0;
+  if(story){ curStory = story; storyFade = 0; state = S.STORY; }
+  switch(s){
+    case S.P1:
+      resetP(); collectibles=[]; disasters=[]; score=0; disasterCount=0;
+      checkItems.forEach(c=>c.done=false);
+      break;
+    case S.P2:
+      P.x=150; P.bp=20; negFloats=[]; collectibles=[]; p2Crises=[]; p2IntCount=0;
+      break;
+    case S.P3:
+      resetP(); P.y=280; obstacles=[]; obsHits=0; steerAngle=0;
+      break;
+    case S.P4:
+      selDoor=-1; doorPhase=0; doorTimer=0; wrongTries=0;
+      break;
+    case S.P5:
+      p5State=0; p5Timer=0; bright=0;
+      break;
+    case S.ENDING:
+      endTimer=0; endPhase=0; resetP(); P.bp=0;
+      break;
+  }
+}
+
+// ===== 移動玩家 =====
+function movePlayer(spdMul=1){
+  const spd = P.spd * spdMul;
+  if(keys['ArrowLeft']||keys['a']||(touchActive&&touchX<350)) P.x=Math.max(30,P.x-spd);
+  if(keys['ArrowRight']||keys['d']||(touchActive&&touchX>=450)) P.x=Math.min(770,P.x+spd);
+  if((keys['ArrowUp']||keys[' ']||keys['w'])&&P.ground){
+    P.vy=-10*spdMul; P.ground=false; keys[' ']=false;
+  }
+  P.vy+=GR; P.y+=P.vy;
+  if(P.y>=GY-P.h){ P.y=GY-P.h; P.vy=0; P.ground=true; }
+}
+
+// ===== 震動 + 閃紅 =====
+let shakeX=0, shakeY=0, shakePow=0;
+function shake(pow){ shakePow=pow; }
+function updateShake(){
+  if(shakePow>0){ shakeX=(Math.random()-.5)*shakePow; shakeY=(Math.random()-.5)*shakePow; shakePow*=.9; if(shakePow<.5)shakePow=0; }
+  else { shakeX=0; shakeY=0; }
+}
+let flashAlpha = 0;
+function flash(){ flashAlpha = .4; }
+function drawFlash(){
+  if(flashAlpha>0){ ctx.fillStyle=`rgba(255,0,0,${flashAlpha})`; ctx.fillRect(0,0,800,450); flashAlpha-=.015; }
+}
+
+// ===== 繪製災難物件 =====
+function drawDisasterObj(d){
+  if(d.hit) return;
+  d.pulse += .08;
+  const wobble = Math.sin(d.pulse) * 3;
+  const glowR = 24 + Math.sin(d.pulse*1.5)*4;
+
+  // 警示紅光圈
+  ctx.globalAlpha = .2 + Math.sin(d.pulse)*.1;
+  ctx.fillStyle = '#ff2222';
+  ctx.beginPath(); ctx.arc(d.x, d.y, glowR+8, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // 暗紅底圓
+  ctx.fillStyle = '#8b0000';
+  ctx.beginPath(); ctx.arc(d.x, d.y, glowR, 0, Math.PI*2); ctx.fill();
+
+  // 紅框
+  ctx.strokeStyle = '#ff4444';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(d.x, d.y, glowR, 0, Math.PI*2); ctx.stroke();
+
+  // emoji
+  ctx.font = '22px serif'; ctx.textAlign = 'center';
+  ctx.fillText(d.type.emoji, d.x, d.y - 2 + wobble);
+
+  // 小標籤
+  text(d.type.warn, d.x, d.y + glowR + 12, 10, '#ff8888');
+}
+
+// ===== 繪製 P2 危機物件 =====
+function drawP2CrisisObj(c){
+  if(c.hit) return;
+  c.pulse += .06;
+  const wobble = Math.sin(c.pulse) * 2;
+  const sz = 22 + Math.sin(c.pulse*1.2)*3;
+
+  // 暗紫光圈
+  ctx.globalAlpha = .15 + Math.sin(c.pulse)*.08;
+  ctx.fillStyle = '#6a0dad';
+  ctx.beginPath(); ctx.arc(c.x, c.y, sz+10, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // 底圓
+  ctx.fillStyle = '#3d0066';
+  ctx.beginPath(); ctx.arc(c.x, c.y, sz, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#9933ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(c.x, c.y, sz, 0, Math.PI*2); ctx.stroke();
+
+  // emoji
+  ctx.font = '20px serif'; ctx.textAlign = 'center';
+  ctx.fillText(c.type.emoji, c.x, c.y - 1 + wobble);
+
+  // 標籤
+  text(c.type.warn, c.x, c.y + sz + 12, 10, '#cc88ff');
+}
+
+// ===== 各階段 =====
+
+// ----- 標題 -----
+function upTitle(){
+  timer++;
+  drawCity(timer*.5,.3);
+  const gr=ctx.createLinearGradient(500,0,800,0);
+  gr.addColorStop(0,'rgba(200,220,200,0)');gr.addColorStop(1,'rgba(200,230,200,.5)');
+  ctx.fillStyle=gr;ctx.fillRect(500,0,300,450);
+  textShadow('尋找真幸福',400,140+Math.sin(timer*.02)*5,52,'#fff');
+  text('寫給在忙碌生活中，渴望真正「安息」的你',400,195,16,'rgba(255,255,255,.8)');
+  const sc=.9+Math.sin(timer*.05)*.1;
+  ctx.save();ctx.translate(400,290);ctx.scale(sc,sc);btn('開始旅程',0,0,160,50);ctx.restore();
+  text('💻 方向鍵移動 / 空白鍵跳躍',400,370,12,'rgba(255,255,255,.4)');
+  text('📱 觸控左右移動 / 點擊互動',400,390,12,'rgba(255,255,255,.4)');
+  if(clicked||keys[' ']||keys['Enter']){ keys[' ']=keys['Enter']=false; go(S.P1,'intro'); }
+}
+
+// ----- 故事 -----
+function upStory(){
+  timer++; storyFade=Math.min(1,storyFade+.02);
+  const st=STORIES[curStory]; if(!st) return;
+  const gr=ctx.createRadialGradient(400,225,50,400,225,400);
+  gr.addColorStop(0,'rgba(50,50,80,1)');gr.addColorStop(1,'rgba(20,20,40,1)');
+  ctx.fillStyle=gr;ctx.fillRect(0,0,800,450);
+  const sy=225-(st.lines.length*15);
+  st.lines.forEach((l,i)=>{
+    const a=clamp((timer-i*15)/30,0,1)*storyFade;
+    if(a>0){
+      const hint=l.includes('▸');
+      text(l,400,sy+i*35,hint?13:18,hint?`rgba(200,180,150,${a*.6})`:`rgba(255,248,230,${a})`);
+    }
+  });
+  if((clicked||keys[' ']||keys['Enter'])&&timer>30){
+    keys[' ']=keys['Enter']=false;
+    go(st.next);
+  }
+}
+
+// ----- Phase 1: 追逐人生勝利組 -----
+function upP1(){
+  timer++; scrollX+=2;
+  drawCity(scrollX,0);
+
+  // 提示
+  if(timer<220){
+    const a=timer<120?Math.min(1,timer/60):Math.max(0,(220-timer)/100);
+    text('← → 移動收集金色物品，小心紅色災難！',400,25,15,`rgba(255,255,255,${a})`);
+    const nextNeed = checkItems.find(c=>!c.done);
+    if(nextNeed) text(`目標：收集 ${nextNeed.need} 個填滿下一項`,400,48,12,`rgba(255,220,150,${a})`);
+  }
+
+  // 生成收集物
+  if(timer%28===0) spawnItem();
+
+  // 生成災難物件 — 隨機出現在場上，玩家要閃避
+  // 隨著進度越多，災難越頻繁
+  const disasterRate = Math.max(80, 160 - score*5 - disasterCount*15);
+  if(timer > 120 && timer % disasterRate === 0 && disasters.filter(d=>!d.hit).length < 3){
+    spawnDisaster();
+  }
+
+  // 移動
+  movePlayer(1);
+
+  // 收集物碰撞
+  collectibles.forEach(it=>{
+    it.x -= 2.5;
+    it.y += Math.sin(frame*.05+it.bob)*.3;
+    if(!it.got && Math.abs(it.x-P.x)<30 && Math.abs(it.y-(P.y+20))<35){
+      it.got=true; score++;
+      P.bp=Math.min(100,P.bp+4);
+      addP(it.x,it.y,it.type.col,8);
+      checkItems.forEach(c=>{ if(!c.done&&score>=c.need) c.done=true; });
+    }
+  });
+
+  // 災難物件碰撞 — 碰到才觸發中斷！
+  disasters.forEach(d=>{
+    d.x -= 1.8; // 比收集物慢一點，讓玩家有機會閃
+    d.y += Math.sin(frame*.04+d.bob)*.5;
+    if(!d.hit){
+      const dx = d.x - P.x, dy = d.y - (P.y+20);
+      if(Math.abs(dx)<28 && Math.abs(dy)<32){
+        d.hit = true;
+        disasterCount++;
+        interruptData = d.type;
+        interruptTimer = 0;
+        state = S.P1_INT;
+        shake(14); flash();
+      }
+    }
+  });
+
+  // 繪製收集物
+  collectibles.filter(i=>!i.got&&i.x>-30).forEach(it=>{
+    // 金色光暈
+    ctx.globalAlpha=.15;
+    ctx.fillStyle='#f1c40f';
+    ctx.beginPath();ctx.arc(it.x,it.y,20,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.font='28px serif';ctx.textAlign='center';ctx.fillText(it.type.emoji,it.x,it.y);
+  });
+
+  // 繪製災難物件
+  disasters.filter(d=>!d.hit&&d.x>-40).forEach(drawDisasterObj);
+
+  collectibles=collectibles.filter(i=>i.x>-50);
+  disasters=disasters.filter(d=>d.x>-50);
+
+  // 繪製玩家
+  drawPerson(P.x,P.y+P.h,1,P.bp);
+
+  // 進度
+  text(`收集：${score}`,400,435,13,'rgba(255,255,255,.6)');
+  if(disasterCount>0) text(`遭遇災難：${disasterCount} 次`,580,435,11,'rgba(255,150,150,.6)');
+
+  // 清單
+  drawChecklist(600,30);
+  drawParticles(); drawFlash();
+
+  // 完成
+  if(checkItems.every(c=>c.done)){ go(S.P2,'afterP1'); }
+}
+
+// ----- Phase 1 中斷（碰到災難觸發）-----
+function upP1Int(){
+  interruptTimer++;
+  drawCity(scrollX,.2);
+  ctx.fillStyle=`rgba(0,0,0,${Math.min(.7,interruptTimer/30)})`;
+  ctx.fillRect(0,0,800,450);
+
+  const fi = Math.min(1,interruptTimer/40);
+  if(interruptData){
+    const cw=500,ch=260,cx=400-cw/2,cy=225-ch/2;
+    rr(cx,cy,cw,ch,15,`rgba(40,20,20,${fi*.95})`,`rgba(200,80,80,${fi})`);
+    ctx.globalAlpha=fi;
+
+    ctx.font='52px serif';ctx.textAlign='center';
+    ctx.fillText(interruptData.icon,400,cy+55);
+    text(interruptData.title,400,cy+100,22,'#ff8888');
+    text(interruptData.desc,400,cy+135,15,'#ddd');
+
+    text(`你失去了 ${interruptData.loss} 個收集物！`,400,cy+175,16,'#ff6666');
+    text('天有不測風雲，即使擁有這些條件，也不一定保證能長久。',400,cy+205,12,'rgba(255,200,180,.7)');
+
+    ctx.globalAlpha=1;
+
+    if(interruptTimer>90){
+      const ba=Math.min(1,(interruptTimer-90)/30);
+      ctx.globalAlpha=ba;
+      btn('繼續追趕...',400,cy+ch-25,180,40);
+      ctx.globalAlpha=1;
+      if((clicked||keys[' ']||keys['Enter'])&&interruptTimer>100){
+        keys[' ']=keys['Enter']=false;
+        score=Math.max(0,score-interruptData.loss);
+        checkItems.forEach(c=>c.done=score>=c.need);
+        interruptData=null;
+        state=S.P1;
+      }
+    }
+  }
+  drawFlash();
+}
+
+// ----- Phase 2: 背包越來越重 -----
+function upP2(){
+  timer++;
+  const slow=P.bp/100;
+  scrollX+=2-slow*1.5;
+  const dark=Math.min(.7,timer/800);
+  drawCity(scrollX,dark);
+
+  // 提示
+  if(timer<150){
+    const a=Math.min(1,timer/60)*(1-Math.max(0,(timer-90)/60));
+    text('背包越來越重...小心紫色危機！',400,25,16,`rgba(255,200,150,${a})`);
+  }
+
+  // 生成收集物（誘惑）
+  if(timer%50===0) spawnItem();
+
+  // 生成負面文字漂浮
+  if(timer%35===0&&timer>60){
+    const labels=['😰失眠','😨恐慌','😢憂鬱','💔關係破裂','😵身心疲憊','😤壞脾氣','🫠空虛'];
+    negFloats.push({x:800,y:100+Math.random()*250,text:labels[Math.floor(Math.random()*labels.length)],a:1});
+  }
+
+  // 生成 P2 危機物件
+  const crisisRate = Math.max(60, 150 - timer*0.1 - p2IntCount*20);
+  if(timer>100 && timer%Math.floor(crisisRate)===0 && p2Crises.filter(c=>!c.hit).length<2){
+    spawnP2Crisis();
+  }
+
+  // 移動
+  movePlayer(1-slow*.7);
+
+  // 收集物碰撞（背包更重）
+  collectibles.forEach(it=>{
+    it.x-=2;
+    if(!it.got&&Math.abs(it.x-P.x)<30&&Math.abs(it.y-(P.y+20))<35){
+      it.got=true; P.bp=Math.min(100,P.bp+10);
+      addP(it.x,it.y,'#888',5);
+    }
+  });
+  collectibles.filter(i=>!i.got&&i.x>-30).forEach(it=>{
+    ctx.globalAlpha=.5;ctx.font='24px serif';ctx.textAlign='center';ctx.fillText(it.type.emoji,it.x,it.y);ctx.globalAlpha=1;
+  });
+  collectibles=collectibles.filter(i=>i.x>-50);
+
+  // P2 危機物件碰撞
+  p2Crises.forEach(c=>{
+    c.x -= 1.5;
+    c.y += Math.sin(frame*.03+c.bob)*.4;
+    if(!c.hit){
+      const dx=c.x-P.x, dy=c.y-(P.y+20);
+      if(Math.abs(dx)<26 && Math.abs(dy)<30){
+        c.hit = true;
+        p2IntData = c.type;
+        p2IntTimer = 0;
+        state = S.P2_INT;
+        shake(10); flash();
+      }
+    }
+  });
+
+  // 繪製 P2 危機物件
+  p2Crises.filter(c=>!c.hit&&c.x>-40).forEach(drawP2CrisisObj);
+  p2Crises=p2Crises.filter(c=>c.x>-50);
+
+  // 負面文字
+  negFloats.forEach(n=>{
+    n.x-=1.2; n.a-=.002;
+    if(n.a>0){ctx.globalAlpha=n.a*.8;text(n.text,n.x,n.y,18,'#ff6b6b');ctx.globalAlpha=1;}
+  });
+  negFloats=negFloats.filter(n=>n.x>-100&&n.a>0);
+
+  // 玩家
+  drawPerson(P.x,P.y+P.h,1,P.bp);
+
+  // 重量條
+  rr(610,45,160,15,5,'#333');
+  rr(612,47,(P.bp/100)*156,11,3,P.bp>70?'#e74c3c':P.bp>40?'#f39c12':'#2ecc71');
+  text('重擔程度',690,32,12,'#fff');
+
+  // 自動增重（較慢）
+  if(timer%20===0) P.bp=Math.min(100,P.bp+1);
+
+  // 底部文字
+  if(timer>300){
+    const a=Math.min(1,(timer-300)/100);
+    text('「追求沒有的，又怕失去擁有的。」',400,430,16,`rgba(255,200,150,${a})`);
+  }
+
+  drawParticles(); drawFlash();
+
+  if(P.bp>=98||timer>1500) go(S.P3,'afterP2');
+}
+
+// ----- Phase 2 中斷（碰到危機物件觸發）-----
+function upP2Int(){
+  p2IntTimer++;
+  drawCity(scrollX,.5);
+  ctx.fillStyle=`rgba(0,0,0,${Math.min(.75,p2IntTimer/30)})`;
+  ctx.fillRect(0,0,800,450);
+
+  const fi=Math.min(1,p2IntTimer/40);
+  if(p2IntData){
+    const cw=520,ch=280,cx=400-cw/2,cy=225-ch/2;
+    rr(cx,cy,cw,ch,15,`rgba(30,15,30,${fi*.95})`,`rgba(180,100,100,${fi})`);
+    ctx.globalAlpha=fi;
+
+    ctx.font='52px serif';ctx.textAlign='center';ctx.fillText(p2IntData.emoji,400,cy+55);
+    text(p2IntData.title,400,cy+95,24,'#ff9999');
+    p2IntData.desc.split('\n').forEach((l,i)=>text(l,400,cy+130+i*25,15,'#ccc'));
+
+    if(p2IntTimer>60) text('華麗外表下的沉重背包',400,cy+200,18,'#dda0a0');
+
+    ctx.globalAlpha=1;
+
+    if(p2IntTimer>100){
+      const ba=Math.min(1,(p2IntTimer-100)/30);
+      ctx.globalAlpha=ba;
+      btn('我知道了...',400,cy+ch-30,180,40);
+      ctx.globalAlpha=1;
+      if((clicked||keys[' ']||keys['Enter'])&&p2IntTimer>110){
+        keys[' ']=keys['Enter']=false;
+        p2IntCount++;
+        P.bp=Math.min(100,P.bp+12);
+        p2IntData=null;
+        state=S.P2;
+      }
+    }
+  }
+  drawFlash();
+}
+
+// ----- Phase 3: 失去控制力 -----
+function upP3(){
+  timer++;
+  drawCity(timer,.5);
+
+  text('罪的真正症狀：失去控制力',400,25,20,'#ff9999');
+
+  // 方向盤
+  const wx=400,wy=110,wr=45;
+  steerAngle+=(Math.random()-.5)*.08; steerAngle*=.95;
+  const crackLevel=Math.min(1,timer/600);
+
+  ctx.save();ctx.translate(wx,wy);ctx.rotate(steerAngle+Math.sin(timer*.05)*.2*(1+crackLevel));
+  ctx.strokeStyle='#888';ctx.lineWidth=7;ctx.beginPath();ctx.arc(0,0,wr,0,Math.PI*2);ctx.stroke();
+  if(crackLevel>.2){
+    ctx.strokeStyle=`rgba(255,68,68,${crackLevel})`;ctx.lineWidth=2+crackLevel*2;
+    ctx.beginPath();ctx.moveTo(-5,-wr);ctx.lineTo(5,-wr+15);ctx.lineTo(-3,-wr+25);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(5,wr);ctx.lineTo(-5,wr-15);ctx.stroke();
+    if(crackLevel>.6){ctx.beginPath();ctx.moveTo(wr,-5);ctx.lineTo(wr-15,5);ctx.stroke();}
+  }
+  ctx.strokeStyle='#777';ctx.lineWidth=4;
+  for(let i=0;i<3;i++){const a=i*Math.PI*2/3;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(a)*wr*.8,Math.sin(a)*wr*.8);ctx.stroke();}
+  ctx.restore();
+
+  // 三車道
+  const lanes=[210,280,350];
+  let target=1;
+  if(keys['ArrowUp']||keys['w']||(touchActive&&touchY<250)) target=0;
+  if(keys['ArrowDown']||keys['s']||(touchActive&&touchY>350)) target=2;
+
+  const loss=Math.min(.6,timer/800);
+  if(Math.random()<loss*.12) target=Math.floor(Math.random()*3);
+  P.y=lerp(P.y,lanes[target],.1);P.x=150;
+
+  const spawnRate = Math.max(20, 40 - Math.floor(timer/50));
+  if(timer%spawnRate===0){
+    const lane=Math.floor(Math.random()*3);
+    obstacles.push({x:820,y:lanes[lane],label:OBS_LABELS[Math.floor(Math.random()*OBS_LABELS.length)],hit:false});
+  }
+
+  obstacles.forEach(o=>{
+    o.x-=3-Math.min(1,timer/500);
+    if(!o.hit&&Math.abs(o.x-P.x)<25&&Math.abs(o.y-P.y)<30){
+      o.hit=true; obsHits++;
+      addP(o.x,o.y,'#ff4444',8);
+      steerAngle+=(Math.random()-.5)*.8;
+      shake(6);
+    }
+  });
+
+  obstacles.forEach(o=>{
+    if(o.x>-50){
+      ctx.globalAlpha=o.hit?.3:1;
+      ctx.fillStyle=o.hit?'#666':'#c0392b';
+      ctx.beginPath();ctx.arc(o.x,o.y,18,0,Math.PI*2);ctx.fill();
+      text(o.label,o.x,o.y,11,'#fff');
+      ctx.globalAlpha=1;
+    }
+  });
+  obstacles=obstacles.filter(o=>o.x>-50);
+
+  drawPerson(P.x,P.y+25,.8,60);
+
+  if(timer>200&&timer<350){
+    const a=timer<250?((timer-200)/50):timer>300?((350-timer)/50):1;
+    text('「想要做的不能做，',400,400,16,`rgba(255,180,150,${a})`);
+    text('不想要做的又去做。」',400,425,16,`rgba(255,180,150,${a})`);
+  }
+
+  const hitColor = obsHits>15?'#ff4444':obsHits>8?'#ff8888':'#ffaaaa';
+  text(`被擊中: ${obsHits}`,710,25,14,hitColor);
+
+  const controlPct = Math.max(0, 100 - obsHits*5 - timer*0.05);
+  rr(700,50,80,12,4,'#333');
+  rr(702,52,Math.max(0,controlPct/100*76),8,2,controlPct>50?'#2ecc71':controlPct>25?'#f39c12':'#e74c3c');
+  text('控制力',740,45,10,'#aaa');
+
+  drawParticles();
+
+  if(timer>800||obsHits>=20||controlPct<=0) go(S.P4,'afterP3');
+}
+
+// ----- Phase 4: 選門 -----
+function upP4(){
+  timer++; doorTimer++;
+  ctx.fillStyle='#1a1520';ctx.fillRect(0,0,800,450);
+  const gr=ctx.createRadialGradient(400,400,100,400,400,500);
+  gr.addColorStop(0,'rgba(60,40,30,.5)');gr.addColorStop(1,'rgba(20,15,20,0)');
+  ctx.fillStyle=gr;ctx.fillRect(0,0,800,450);
+  ctx.fillStyle='#2a2030';ctx.fillRect(0,370,800,80);
+
+  if(doorPhase===0){
+    text('選擇一扇門來解決你的困境',400,35,20,'#ddd');
+    if(wrongTries>0) text(`已嘗試 ${wrongTries} 次，都無效...`,400,65,13,'rgba(255,150,150,.7)');
+
+    for(let i=0;i<3;i++){
+      if(wrongTries>i){
+        const dx=130+i*220,dy=100,dw=130,dh=250;
+        ctx.globalAlpha=.3;
+        ctx.fillStyle='#3a2a1a';ctx.fillRect(dx-5,dy-5,dw+10,dh+10);
+        ctx.fillStyle='#444';ctx.fillRect(dx,dy,dw,dh);
+        text('❌',dx+dw/2,dy+dh/2-10,36,'#666');
+        text(DOOR_INFO[i].label,dx+dw/2,dy+dh/2+30,14,'#666');
+        ctx.globalAlpha=1;
+        continue;
+      }
+      const dx=130+i*220,dy=100,dw=130,dh=250;
+      ctx.fillStyle='#3a2a1a';ctx.fillRect(dx-5,dy-5,dw+10,dh+10);
+      ctx.fillStyle='#654321';ctx.fillRect(dx,dy,dw,dh);
+      ctx.fillStyle='#c49332';ctx.beginPath();ctx.arc(dx+dw-20,dy+dh/2,6,0,Math.PI*2);ctx.fill();
+      ctx.font='40px serif';ctx.textAlign='center';ctx.fillText(DOOR_INFO[i].emoji,dx+dw/2,dy+dh/2-20);
+      text(DOOR_INFO[i].label,dx+dw/2,dy+dh-30,16,'#ddd');
+
+      if(clicked&&inRect(clickX,clickY,dx,dy,dw,dh)&&wrongTries===i){
+        selDoor=i; doorPhase=1; doorTimer=0;
+      }
+    }
+    if(wrongTries<3){
+      text(`試試「${DOOR_INFO[wrongTries].label}」？`,130+wrongTries*220+65,370,12,'rgba(255,220,150,.6)');
+    }
+  }else if(doorPhase===1){
+    const prog=Math.min(1,doorTimer/70);
+    for(let i=0;i<3;i++){
+      const dx=130+i*220,dy=100,dw=130,dh=250;
+      ctx.fillStyle='#3a2a1a';ctx.fillRect(dx-5,dy-5,dw+10,dh+10);
+      if(i===selDoor){
+        ctx.fillStyle='#111';ctx.fillRect(dx,dy,dw,dh);
+        ctx.fillStyle='#654321';ctx.fillRect(dx,dy,dw*(1-prog*.7),dh);
+        if(prog>.5){
+          const ta=(prog-.5)*2;
+          ctx.font='42px serif';ctx.textAlign='center';ctx.globalAlpha=ta;
+          ctx.fillText('❌',dx+dw/2+10,dy+dh/2-15);ctx.globalAlpha=1;
+          text('無效！',dx+dw/2+10,dy+dh/2+30,20,`rgba(255,150,150,${ta})`);
+        }
+      }else{
+        ctx.globalAlpha=.3;ctx.fillStyle='#654321';ctx.fillRect(dx,dy,dw,dh);ctx.globalAlpha=1;
+      }
+    }
+    if(doorTimer>90){ doorPhase=2; doorTimer=0; }
+  }else if(doorPhase===2){
+    const fa=Math.min(1,doorTimer/30);
+    const info=DOOR_INFO[selDoor];
+    const cw=450,ch=200,cx=400-cw/2,cy=180;
+    rr(cx,cy,cw,ch,12,`rgba(40,20,20,${fa*.9})`,`rgba(200,100,100,${fa})`);
+    ctx.globalAlpha=fa;
+    ctx.font='36px serif';ctx.textAlign='center';ctx.fillText(info.emoji,400,cy+40);
+    text(info.label,400,cy+70,20,'#ff8888');
+    info.desc.split('\n').forEach((l,i)=>text(l,400,cy+100+i*25,14,'#ccc'));
+    ctx.globalAlpha=1;
+
+    if(doorTimer>100){
+      const ba=Math.min(1,(doorTimer-100)/30);
+      ctx.globalAlpha=ba;
+      if(wrongTries<2) btn('再試其他門...',400,cy+ch+20,180,40);
+      else btn('似乎都沒有用...',400,cy+ch+20,200,40);
+      ctx.globalAlpha=1;
+      if((clicked||keys[' ']||keys['Enter'])&&doorTimer>110){
+        keys[' ']=keys['Enter']=false;
+        wrongTries++;
+        if(wrongTries>=3) go(S.P5,'afterP4');
+        else { doorPhase=0; doorTimer=0; selDoor=-1; }
+      }
+    }
+  }
+}
+
+// ----- Phase 5: 真正的解法 -----
+function upP5(){
+  timer++; p5Timer++;
+
+  if(p5State===0){
+    ctx.fillStyle='#1a1520';ctx.fillRect(0,0,800,450);
+    const ga=.3+Math.sin(timer*.03)*.1;
+    const gr=ctx.createRadialGradient(400,200,30,400,200,250);
+    gr.addColorStop(0,`rgba(255,230,150,${ga})`);gr.addColorStop(1,'rgba(255,230,150,0)');
+    ctx.fillStyle=gr;ctx.fillRect(0,0,800,450);
+
+    if(p5Timer<120) text('但還有一扇門...',400,45,22,`rgba(255,232,160,${Math.min(1,p5Timer/60)})`);
+    else text('上帝的指定解法',400,45,22,'#ffe8a0');
+
+    const dx=310,dy=70,dw=180,dh=280;
+    ctx.shadowColor='#ffe080';ctx.shadowBlur=20+Math.sin(timer*.05)*10;
+    ctx.fillStyle='#c49332';ctx.fillRect(dx-8,dy-8,dw+16,dh+16);
+    ctx.fillStyle='#f5e6c8';ctx.fillRect(dx,dy,dw,dh);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#c49332';ctx.fillRect(dx+dw/2-4,dy+30,8,80);ctx.fillRect(dx+dw/2-25,dy+50,50,8);
+
+    if(p5Timer>60){
+      const a=Math.min(1,(p5Timer-60)/60);
+      text('「凡勞苦擔重擔的人',400,dy+dh/2+20,14,`rgba(139,105,20,${a})`);
+      text('可以到我這裡來，',400,dy+dh/2+42,14,`rgba(139,105,20,${a})`);
+      text('我必使你們得安息。」',400,dy+dh/2+64,14,`rgba(139,105,20,${a})`);
+      text('—— 馬太福音 11:28',400,dy+dh/2+90,11,`rgba(160,136,90,${a})`);
+    }
+    if(p5Timer>120){
+      const ba=Math.min(1,(p5Timer-120)/40);
+      ctx.globalAlpha=ba;btn('推開這扇門',400,415,160,45,true);ctx.globalAlpha=1;
+      if(clicked&&p5Timer>130){ p5State=1; p5Timer=0; }
+    }
+  }else if(p5State===1){
+    const prog=Math.min(1,p5Timer/120);
+    bright=ease(prog);
+    ctx.fillStyle=`rgba(26,21,32,${1-bright})`;ctx.fillRect(0,0,800,450);
+    drawBright(bright);
+    if(bright>.2){
+      const la=(bright-.2)*1.2;
+      const gr=ctx.createRadialGradient(400,200,10,400,200,400);
+      gr.addColorStop(0,`rgba(255,245,200,${la})`);gr.addColorStop(.5,`rgba(255,230,150,${la*.5})`);gr.addColorStop(1,'rgba(255,230,150,0)');
+      ctx.fillStyle=gr;ctx.fillRect(0,0,800,450);
+    }
+    const dx=310,dy=70,dw=180,dh=280;
+    ctx.globalAlpha=1-bright;
+    ctx.fillStyle='#c49332';ctx.fillRect(dx-8,dy-8,dw+16,dh+16);
+    ctx.fillStyle='#f5e6c8';ctx.fillRect(dx,dy,dw*(1-bright*.8),dh);
+    ctx.globalAlpha=1;
+    if(p5Timer===40) addP(200,300,'#888',20,60,4);
+    if(p5Timer===60) addP(300,320,'#999',20,60,4);
+    if(p5Timer===80) addP(250,280,'#aaa',15,50,3);
+    drawParticles();
+    if(p5Timer>80){ const a=Math.min(1,(p5Timer-80)/40); textShadow('你的鎖鏈斷開了！',400,380,24,`rgba(255,240,200,${a})`); }
+    if(p5Timer>160){ p5State=2; p5Timer=0; }
+  }else if(p5State===2){
+    drawBright(1);
+    textShadow('幸福的方程式',400,45,32,'#c49332');
+    const steps=[
+      {emoji:'🙌',lines:['相信並','倚靠耶穌'],delay:0},
+      {emoji:'📜',lines:['罪債還清','成為上帝兒女'],delay:40},
+      {emoji:'🕊️',lines:['脫離','罪的控制'],delay:80},
+    ];
+    steps.forEach((st,i)=>{
+      const a=clamp((p5Timer-st.delay)/50,0,1);
+      if(a>0){
+        const sx=150+i*250,sy=190;
+        ctx.globalAlpha=a;
+        ctx.fillStyle='rgba(255,248,230,.9)';ctx.beginPath();ctx.arc(sx,sy,55,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='#c49332';ctx.lineWidth=3;ctx.stroke();
+        ctx.font='36px serif';ctx.textAlign='center';ctx.fillText(st.emoji,sx,sy-5);
+        st.lines.forEach((l,li)=>text(l,sx,sy+65+li*22,14,'#5a4a2a'));
+        if(i<2){
+          ctx.fillStyle=`rgba(196,147,50,${a})`;ctx.beginPath();
+          ctx.moveTo(sx+70,sy);ctx.lineTo(sx+85,sy-8);ctx.lineTo(sx+85,sy-3);
+          ctx.lineTo(sx+110,sy-3);ctx.lineTo(sx+110,sy+3);ctx.lineTo(sx+85,sy+3);
+          ctx.lineTo(sx+85,sy+8);ctx.closePath();ctx.fill();
+        }
+        ctx.globalAlpha=1;
+      }
+    });
+    if(p5Timer>140){
+      const a=Math.min(1,(p5Timer-140)/50);
+      text('「凡勞苦擔重擔的人可以到我這裡來，我必使你們得安息。」',400,350,14,`rgba(139,105,20,${a})`);
+      text('—— 馬太福音 11:28',400,375,12,`rgba(160,136,90,${a})`);
+    }
+    if(p5Timer>180){
+      const a=Math.min(1,(p5Timer-180)/40);
+      text('接上真正的幸福源頭',400,410,16,`rgba(196,147,50,${a})`);
+      text('當我們與幸福的源頭接軌，生命就能再次充滿平安與喜樂。',400,435,12,`rgba(139,105,20,${a})`);
+    }
+    drawLights();
+    if(p5Timer>280||(clicked&&p5Timer>180)) go(S.ENDING);
+  }
+}
+
+// ----- Ending -----
+function upEnding(){
+  timer++; endTimer++;
+  drawBright(1);
+  ctx.fillStyle='#d4b896';ctx.beginPath();
+  ctx.moveTo(0,380);ctx.quadraticCurveTo(200,370,400,375);ctx.quadraticCurveTo(600,380,800,370);
+  ctx.lineTo(800,410);ctx.quadraticCurveTo(600,420,400,415);ctx.quadraticCurveTo(200,410,0,420);
+  ctx.closePath();ctx.fill();
+  drawLights();
+
+  if(endPhase===0){
+    const drop=Math.min(1,endTimer/80);
+    if(drop>.3){
+      ctx.globalAlpha=.7;ctx.fillStyle='#a0704a';rr(100,350,35,40,5,'#a0704a');
+      ctx.strokeStyle='#888';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(120,355);ctx.lineTo(140,345);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(125,370);ctx.lineTo(145,365);ctx.stroke();
+      ctx.globalAlpha=1;
+    }
+    const walk=clamp((endTimer-80)/150,0,1);
+    const px=lerp(160,340,ease(walk));
+    const la=.2+Math.sin(endTimer*.03)*.1;
+    const lg=ctx.createLinearGradient(0,0,0,400);
+    lg.addColorStop(0,`rgba(255,240,180,${la})`);lg.addColorStop(1,'rgba(255,240,180,0)');
+    ctx.fillStyle=lg;ctx.fillRect(px-50,0,180,400);
+    drawJesus(px+65,370);
+    drawPerson(px,370,1,0,true);
+    if(endTimer>30){ const a=Math.min(1,(endTimer-30)/60); textShadow('卸下重擔，成為上帝的兒女',400,55,28,`rgba(139,105,20,${a})`); }
+    if(endTimer>130){ const a=Math.min(1,(endTimer-130)/60); text('真正的幸福，從放下背包，回到天父的家開始。',400,105,16,`rgba(100,80,50,${a})`); }
+    if(endTimer>280){ endPhase=1; endTimer=0; }
+  }else if(endPhase===1){
+    const a=Math.min(1,endTimer/60);
+    const cg=ctx.createRadialGradient(400,200,30,400,200,300);
+    cg.addColorStop(0,`rgba(255,240,180,${a*.4})`);cg.addColorStop(1,'rgba(255,240,180,0)');
+    ctx.fillStyle=cg;ctx.fillRect(0,0,800,450);
+    textShadow('另一種真正幸福的可能',400,80,32,`rgba(139,105,20,${a})`);
+    if(endTimer>50){
+      const a2=Math.min(1,(endTimer-50)/50);
+      text('即使沒有「人生勝利組」的條件...',400,160,17,`rgba(80,70,50,${a2})`);
+      text('即便面對人生的不測風雲...',400,190,17,`rgba(80,70,50,${a2})`);
+    }
+    if(endTimer>110){
+      const a3=Math.min(1,(endTimer-110)/50);
+      text('你依然可以擁有無法被奪走的',400,240,21,`rgba(196,147,50,${a3})`);
+      textShadow('平安與幸福。',400,275,28,`rgba(196,147,50,${a3})`);
+    }
+    if(endTimer>180){
+      const a4=Math.min(1,(endTimer-180)/50);
+      text('今天，就讓耶穌為你的生命帶來真正的安息。',400,330,16,`rgba(139,105,20,${a4})`);
+    }
+    if(endTimer>260){
+      const ba=Math.min(1,(endTimer-260)/40);
+      ctx.globalAlpha=ba;btn('重新體驗',400,400,140,40);ctx.globalAlpha=1;
+      if(clicked&&endTimer>280){ state=S.TITLE; timer=0; resetP(); wrongTries=0; }
+    }
+  }
+}
+
+// ===== 主循環 =====
+function loop(){
+  frame++;
+  updateShake();
+  ctx.save();ctx.translate(shakeX,shakeY);
+  switch(state){
+    case S.TITLE: upTitle(); break;
+    case S.STORY: upStory(); break;
+    case S.P1: upP1(); break;
+    case S.P1_INT: upP1Int(); break;
+    case S.P2: upP2(); break;
+    case S.P2_INT: upP2Int(); break;
+    case S.P3: upP3(); break;
+    case S.P4: upP4(); break;
+    case S.P5: upP5(); break;
+    case S.ENDING: upEnding(); break;
+  }
+  ctx.restore();
+  clicked=false;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
