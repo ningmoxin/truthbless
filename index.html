@@ -60,7 +60,7 @@ function updateLayout() {
       playerStartY: H * 0.78 - 50,
       itemMinY: H * 0.5,
       itemMaxY: H * 0.73,
-      checkX: W - 145, checkY: 8,
+      checkX: 5, checkY: 8,
       fontSize: 0.85,         // 字型縮放
       // P3 車道
       lanes: [H * 0.4, H * 0.55, H * 0.7],
@@ -115,22 +115,25 @@ function gcp(e, t) {
   const cy = t ? e.touches[0].clientY : e.clientY;
   return [(cx - r.left) * sx, (cy - r.top) * sy];
 }
+let touchStartX = -1, touchStartY = -1, touchMoved = false;
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   [touchX,touchY] = gcp(e,true);
+  touchStartX = touchX; touchStartY = touchY; touchMoved = false;
   touchActive = true;
   touchCount = e.touches.length;
   clicked = true;
   [clickX,clickY] = [touchX,touchY];
-  // 檢查是否點到虛擬跳躍按鈕
-  if(isGamePhase() && isMobile){
-    const jb = getJumpBtnRect();
-    if(touchX>=jb.x && touchX<=jb.x+jb.w && touchY>=jb.y && touchY<=jb.y+jb.h){
-      jumpPressed = true;
-    }
-  }
+  // 點擊=跳躍（遊戲中）
+  if(isGamePhase() && isMobile) jumpPressed = true;
 }, {passive:false});
-canvas.addEventListener('touchmove', e => { e.preventDefault(); [touchX,touchY]=gcp(e,true); touchCount=e.touches.length; }, {passive:false});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  [touchX,touchY]=gcp(e,true);
+  touchCount=e.touches.length;
+  // 移動超過閾值代表是滑動而非點擊
+  if(Math.abs(touchX-touchStartX)>15||Math.abs(touchY-touchStartY)>15) touchMoved=true;
+}, {passive:false});
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
   touchCount = e.touches.length;
@@ -139,15 +142,6 @@ canvas.addEventListener('touchend', e => {
 canvas.addEventListener('click', e => { clicked=true; [clickX,clickY]=gcp(e,false); });
 
 function isGamePhase(){ return state===S.P1||state===S.P2; }
-function getJumpBtnRect(){
-  const sz = V ? 65 : 60;
-  return { x: W - sz - 15, y: L.groundY - sz - 10, w: sz, h: sz };
-}
-function getMoveZones(){
-  // 左右移動觸控區（排除跳躍按鈕區域）
-  const midX = V ? W * 0.5 : W * 0.45;
-  return { leftMax: midX, rightMin: midX };
-}
 
 // ===== 工具 =====
 function fs(sz){ return Math.round(sz * L.fontSize); }
@@ -318,25 +312,16 @@ function go(s,story=null){
 // ===== 移動 =====
 function movePlayer(mul=1){
   const spd=P.spd*mul;
-  const mz = getMoveZones();
   // 鍵盤
   if(keys['ArrowLeft']||keys['a']) P.x=Math.max(30,P.x-spd);
   if(keys['ArrowRight']||keys['d']) P.x=Math.min(W-30,P.x+spd);
-  // 觸控移動（排除跳躍按鈕區域）
-  if(touchActive && isMobile){
-    const jb = getJumpBtnRect();
-    const inJumpBtn = touchX>=jb.x&&touchX<=jb.x+jb.w&&touchY>=jb.y&&touchY<=jb.y+jb.h;
-    if(!inJumpBtn){
-      if(touchX < mz.leftMax) P.x=Math.max(30,P.x-spd);
-      if(touchX > mz.rightMin) P.x=Math.min(W-30,P.x+spd);
-    }
+  // 觸控：按住左/右半邊移動
+  if(touchActive){
+    const mid = W * 0.5;
+    if(touchX < mid) P.x=Math.max(30,P.x-spd);
+    if(touchX > mid) P.x=Math.min(W-30,P.x+spd);
   }
-  // 非觸控裝置的觸控（滑鼠模擬等）
-  if(touchActive && !isMobile){
-    if(touchX<W*.4) P.x=Math.max(30,P.x-spd);
-    if(touchX>W*.6) P.x=Math.min(W-30,P.x+spd);
-  }
-  // 跳躍
+  // 跳躍（鍵盤或觸控點擊）
   if((keys['ArrowUp']||keys[' ']||keys['w']||jumpPressed)&&P.ground){
     P.vy=-10*mul;P.ground=false;keys[' ']=false;jumpPressed=false;
   }
@@ -376,47 +361,30 @@ function drawProgressBar(){
   });
 }
 
-// ===== 虛擬按鈕繪製 =====
-function drawVirtualControls(){
+// ===== 觸控提示 =====
+function drawTouchHints(){
   if(!isMobile || !isGamePhase()) return;
-  const jb = getJumpBtnRect();
-  // 跳躍按鈕
-  ctx.globalAlpha = 0.35;
-  rr(jb.x, jb.y, jb.w, jb.h, 14, 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.5)');
-  ctx.globalAlpha = 0.6;
-  // 箭頭
+  ctx.globalAlpha = 0.15;
   ctx.fillStyle = '#fff';
+  // 左箭頭
   ctx.beginPath();
-  const cx2 = jb.x+jb.w/2, cy2 = jb.y+jb.h/2;
-  ctx.moveTo(cx2, cy2-14);
-  ctx.lineTo(cx2+12, cy2+4);
-  ctx.lineTo(cx2+4, cy2+4);
-  ctx.lineTo(cx2+4, cy2+14);
-  ctx.lineTo(cx2-4, cy2+14);
-  ctx.lineTo(cx2-4, cy2+4);
-  ctx.lineTo(cx2-12, cy2+4);
+  ctx.moveTo(25, L.groundY + 25);
+  ctx.lineTo(45, L.groundY + 15);
+  ctx.lineTo(45, L.groundY + 35);
   ctx.closePath();
   ctx.fill();
-  text('跳躍', cx2, cy2+jb.h/2+10, 10, 'rgba(255,255,255,0.4)');
-  ctx.globalAlpha = 1;
-
-  // 左右提示箭頭
-  ctx.globalAlpha = 0.2;
-  // 左
-  ctx.fillStyle = '#fff';
+  // 右箭頭
   ctx.beginPath();
-  ctx.moveTo(30, L.groundY + 25);
-  ctx.lineTo(50, L.groundY + 15);
-  ctx.lineTo(50, L.groundY + 35);
+  ctx.moveTo(W - 25, L.groundY + 25);
+  ctx.lineTo(W - 45, L.groundY + 15);
+  ctx.lineTo(W - 45, L.groundY + 35);
   ctx.closePath();
   ctx.fill();
-  // 右
-  ctx.beginPath();
-  ctx.moveTo(W - 30, L.groundY + 25);
-  ctx.lineTo(W - 50, L.groundY + 15);
-  ctx.lineTo(W - 50, L.groundY + 35);
-  ctx.closePath();
-  ctx.fill();
+  // 中線
+  ctx.strokeStyle='rgba(255,255,255,.1)';ctx.lineWidth=1;ctx.setLineDash([5,8]);
+  ctx.beginPath();ctx.moveTo(W/2,L.groundY+5);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+  // 點擊跳躍提示
+  text('點擊跳躍',W/2,L.groundY+45,10,'rgba(255,255,255,0.25)');
   ctx.globalAlpha = 1;
 }
 
@@ -463,8 +431,8 @@ function upTitle(){
   textShadow('尋找真幸福',L.cx,H*.3+Math.sin(timer*.02)*5,V?42:52,'#fff');
   text('寫給在忙碌生活中，渴望真正「安息」的你',L.cx,H*.3+50,V?13:16,'rgba(255,255,255,.8)');
   const sc=.9+Math.sin(timer*.05)*.1;ctx.save();ctx.translate(L.cx,H*.55);ctx.scale(sc,sc);btn('開始旅程',0,0,160,50);ctx.restore();
-  if(V){text('觸控螢幕左右移動 / 點擊互動',L.cx,H*.72,11,'rgba(255,255,255,.4)');}
-  else{text('💻 方向鍵移動 / 空白鍵跳躍',L.cx,H*.82,12,'rgba(255,255,255,.4)');text('📱 觸控左右移動 / 點擊互動',L.cx,H*.87,12,'rgba(255,255,255,.4)');}
+  if(V){text('按住左右移動 / 點擊跳躍',L.cx,H*.72,11,'rgba(255,255,255,.4)');}
+  else{text('💻 方向鍵移動 / 空白鍵跳躍',L.cx,H*.82,12,'rgba(255,255,255,.4)');text('📱 按住左右移動 / 點擊跳躍',L.cx,H*.87,12,'rgba(255,255,255,.4)');}
   if(clicked||keys[' ']||keys['Enter']){keys[' ']=keys['Enter']=false;go(S.P1,'intro');}
 }
 
@@ -500,7 +468,7 @@ function upP1(){
   drawPerson(P.x,P.y+P.h,1,P.bp);
   text(`收集：${score}`,L.cx,H-15,12,'rgba(255,255,255,.6)');
   if(disasterCount>0)text(`災難：${disasterCount}`,V?L.cx:W*.72,H-15,11,'rgba(255,150,150,.6)');
-  drawChecklist(L.checkX,L.checkY);drawVirtualControls();drawParticles();drawFlash();
+  drawChecklist(L.checkX,L.checkY);drawTouchHints();drawParticles();drawFlash();
   if(checkItems.every(c=>c.done))go(S.P2,'afterP1');
 }
 
@@ -534,7 +502,7 @@ function upP2(){
   text('重擔程度',barX+barW/2,barY-10,11,'#fff');
   if(timer%20===0)P.bp=Math.min(100,P.bp+1);
   if(timer>300){const a=Math.min(1,(timer-300)/100);text('「追求沒有的，又怕失去擁有的。」',L.cx,H-20,V?13:16,`rgba(255,200,150,${a})`);}
-  drawVirtualControls();drawParticles();drawFlash();
+  drawTouchHints();drawParticles();drawFlash();
   if(P.bp>=98||timer>1500)go(S.P3,'afterP2');
 }
 
