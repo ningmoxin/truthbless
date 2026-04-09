@@ -58,9 +58,9 @@ function updateLayout() {
       groundH: H * 0.25,     // 地面高度
       playerStartX: cx,
       playerStartY: H * 0.78 - 50,
-      itemMinY: H * 0.2,
-      itemMaxY: H * 0.65,
-      checkX: W - 175, checkY: 10,
+      itemMinY: H * 0.5,
+      itemMaxY: H * 0.73,
+      checkX: W - 145, checkY: 8,
       fontSize: 0.85,         // 字型縮放
       // P3 車道
       lanes: [H * 0.4, H * 0.55, H * 0.7],
@@ -242,7 +242,7 @@ function drawBright(b=1){
 let checkItems=[{name:'高富帥/白富美',done:false,need:5},{name:'有錢有勢',done:false,need:10},{name:'身體健康',done:false,need:15},{name:'家庭美滿',done:false,need:20}];
 let score=0;
 function drawChecklist(x,y){
-  const cw=V?160:180,ch=V?125:140;
+  const cw=V?140:180,ch=V?115:140;
   rr(x,y,cw,ch,8,'rgba(255,248,230,.95)','#c49332');
   text('人生勝利組',x+cw/2,y+16,V?12:14,'#8b6914');
   ctx.strokeStyle='#c49332';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+8,y+28);ctx.lineTo(x+cw-8,y+28);ctx.stroke();
